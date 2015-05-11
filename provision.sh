@@ -144,16 +144,6 @@ echo -e "\nFINISHED PRODUCTION-SPECIFIC PROVISIONING"
 if [ $DEV_ENV ] ; then
 echo -e "\nBEGINNING DEV-SPECIFIC PROVISIONING"
 
-#######################
-# DEV: BASIC/MISC STUFF
-#######################
-
-pip install \
-    mercurial \
-    virtualenv \
-    virtualenvwrapper \
-    #
-
 # Set root passwd in VM so VR workers can SSH in.
 echo  "root:vagrant" | chpasswd
 
@@ -183,6 +173,16 @@ apt-get install -y --force-yes \
     #
 
 gem install foreman
+
+#######################
+# DEV: BASIC/MISC STUFF
+#######################
+
+pip install \
+    mercurial \
+    virtualenv \
+    virtualenvwrapper \
+    #
 
 #######################
 # DEV: ~/.bashrc
