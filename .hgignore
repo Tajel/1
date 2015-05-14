@@ -7,6 +7,7 @@ syntax: glob
 todos/static/bower/*
 todos/static/.bower-cache/*
 todos/static/.bower-registry/*
+todos/static/.bower-tmp/*
 todos/static/js/compiled.js
 todos/static/jsx/*js
 .git/*
