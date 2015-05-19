@@ -11,3 +11,4 @@ todos/static/.bower-tmp/*
 todos/static/js/compiled.js
 todos/static/jsx/*js
 .git/*
+tmp/*

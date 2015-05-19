@@ -1,15 +1,46 @@
 import json
-import logging
+import select
 
 from werkzeug.utils import redirect
 from werkzeug.exceptions import NotFound
+import psycopg2
 from psycopg2 import ProgrammingError
+import utc
 
-from todos.framework import ApiView, JSONResponse, Response, reverse
+from todos.framework import View, JSONResponse, Response, reverse
+from todos.utils import parse_pgurl
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+class ApiView(View):
+    def __init__(self, *args, **kwargs):
+        super(ApiView, self).__init__(*args, **kwargs)
+        self.dbconn = psycopg2.connect(**parse_pgurl(self.app.settings.db_url))
+        self.dbconn.autocommit = True
+        self.db = self.dbconn.cursor()
+
+    def bind_pg_to_websocket(self, filter_id=None):
+        self.db.execute('LISTEN todos_updates;')
+        while True:
+            # Block on notifications from Postgres, with 5 sec timeout.  If we
+            # don't hear anything in 5 seconds, send a keepalive ping on the
+            # websocket.
+            if select.select([self.dbconn], [], [], 5) == ([], [], []):
+                self.ws.send_frame('', self.ws.OPCODE_PING)
+            else:
+                self.dbconn.poll()
+                while self.dbconn.notifies:
+                    notify = self.dbconn.notifies.pop()
+                    payload = json.loads(notify.payload)
+                    if filter_id is None or payload['id'] == filter_id:
+                        # Handle payloads too big for a PG NOTIFY.
+                        if 'error' in payload and 'id' in payload:
+                            payload = self.get_todo(payload['id'])
+                        self.ws.send(json.dumps(payload))
+
+    def get_todo(self, todo_id):
+        self.db.execute("SELECT row_to_json(todos) FROM todos WHERE id=%s", (todo_id,))
+        row = self.db.fetchone()
+        return row[0] if row else None
 
 
 class TodoList(ApiView):
@@ -40,29 +71,30 @@ class TodoList(ApiView):
 class TodoDetail(ApiView):
 
     def get(self, todo_id):
-        return JSONResponse(self.get_todo(todo_id))
+        todo = self.get_todo(todo_id)
+        if todo is None:
+            return NotFound()
+        return JSONResponse(todo)
 
     def put(self, todo_id):
         todo = json.loads(self.request.data)
-        self.db.execute("UPDATE todos SET title=%s, completed=%s WHERE id=%s;", (
-            todo['title'],
-            todo['completed'],
-            todo_id))
+        query = "UPDATE todos SET title=%s, completed=%s WHERE id=%s RETURNING id;"
+        self.db.execute(query, (todo['title'], todo['completed'], todo_id))
+        updated = self.db.fetchone()
+        if updated is None:
+            return NotFound()
         url = reverse(self.app.map, 'todo_detail', {'todo_id': todo_id})
-        return Response()
+        return redirect(url)
 
     def delete(self, todo_id):
         self.db.execute("DELETE FROM todos WHERE id=%s RETURNING id;",
                         (todo_id,))
-        try:
-            deleted = self.db.fetchone()[0]
-        except ProgrammingError:
+        deleted = self.db.fetchone()
+        if deleted is None:
             return NotFound()
-
         return Response()
 
-
     def websocket(self, todo_id):
-        t = self.get_todo(todo_id)
-        self.ws.send(json.dumps(t))
+        todo = self.get_todo(todo_id)
+        self.ws.send(json.dumps(todo))
         self.bind_pg_to_websocket(filter_id=todo_id)

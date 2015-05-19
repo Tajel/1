@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
-import select
 
 import gevent
 import psycopg2
-import utc
 from werkzeug.routing import Map, Rule
 from werkzeug.wrappers import BaseRequest, BaseResponse
 from werkzeug.exceptions import (HTTPException, MethodNotAllowed,
                                  NotImplemented, NotFound)
 from gwebsocket.exceptions import SocketDeadError
-
-from todos.utils import parse_pgurl
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -44,7 +40,7 @@ class View(object):
 
     def get(self):
         raise MethodNotAllowed()
-    post = delete = put = get
+    post = delete = put = websocket = get
 
     def head(self):
         return self.get()
@@ -66,44 +62,6 @@ class View(object):
 
         resp = handler(**self.params)
         return resp(environ, start_response)
-
-
-class ApiView(View):
-    def __init__(self, *args, **kwargs):
-        super(ApiView, self).__init__(*args, **kwargs)
-        self.dbconn = psycopg2.connect(**parse_pgurl(self.app.settings.db_url))
-        self.dbconn.autocommit = True
-        self.db = self.dbconn.cursor()
-
-    def bind_pg_to_websocket(self, filter_id=None):
-        self.db.execute('LISTEN todos_updates;')
-        last_ping = utc.now()
-        while True:
-            # Handle sending keepalives on the socket.
-            now = utc.now()
-            elapsed = (now - last_ping).total_seconds()
-            if elapsed > self.app.settings.websocket_ping_interval:
-                self.ws.send_frame('', self.ws.OPCODE_PING)
-                last_ping = now
-
-            # Block on notifications from Postgres, with 5 sec timeout.
-            if select.select([self.dbconn], [], [], 5) == ([], [], []):
-                logger.debug("No messages for 5 seconds.")
-            else:
-                self.dbconn.poll()
-                while self.dbconn.notifies:
-                    notify = self.dbconn.notifies.pop()
-                    payload = json.loads(notify.payload)
-                    if filter_id is None or payload['id'] == filter_id:
-                        # Handle payloads too big for a PG NOTIFY.
-                        if 'error' in payload and 'id' in payload:
-                            payload = self.get_todo(payload['id'])
-
-                        self.ws.send(json.dumps(payload))
-
-    def get_todo(self, todo_id):
-        self.db.execute("SELECT row_to_json(todos) FROM todos WHERE id=%s", (todo_id,))
-        return self.db.fetchone()[0]
 
 
 
