@@ -1,11 +1,10 @@
 import json
 import select
 
+import pgpubsub
+import psycopg2
 from werkzeug.utils import redirect
 from werkzeug.exceptions import NotFound
-import psycopg2
-from psycopg2 import ProgrammingError
-import utc
 
 from todos.framework import View, JSONResponse, Response, reverse
 from todos.utils import parse_pgurl
@@ -17,25 +16,7 @@ class ApiView(View):
         self.dbconn = psycopg2.connect(**parse_pgurl(self.app.settings.db_url))
         self.dbconn.autocommit = True
         self.db = self.dbconn.cursor()
-
-    def bind_pg_to_websocket(self, filter_id=None):
-        self.db.execute('LISTEN todos_updates;')
-        while True:
-            # Block on notifications from Postgres, with 5 sec timeout.  If we
-            # don't hear anything in 5 seconds, send a keepalive ping on the
-            # websocket.
-            if select.select([self.dbconn], [], [], 5) == ([], [], []):
-                self.ws.send_frame('', self.ws.OPCODE_PING)
-            else:
-                self.dbconn.poll()
-                while self.dbconn.notifies:
-                    notify = self.dbconn.notifies.pop()
-                    payload = json.loads(notify.payload)
-                    if filter_id is None or payload['id'] == filter_id:
-                        # Handle payloads too big for a PG NOTIFY.
-                        if 'error' in payload and 'id' in payload:
-                            payload = self.get_todo(payload['id'])
-                        self.ws.send(json.dumps(payload))
+        self.pubsub = pgpubsub.PubSub(self.dbconn)
 
     def get_todo(self, todo_id):
         self.db.execute("SELECT row_to_json(todos) FROM todos WHERE id=%s", (todo_id,))
@@ -62,10 +43,17 @@ class TodoList(ApiView):
         return redirect(url)
 
     def websocket(self):
+        # First send out all the existing ones.
         for t in self.get_todos():
             self.ws.send(json.dumps(t[0]))
 
-        self.bind_pg_to_websocket()
+        # Then stream out all the updates.
+        self.pubsub.listen('todos_updates')
+        for e in self.pubsub.events(yield_timeouts=True):
+            if e is None:
+                self.ws.send_frame('', self.ws.OPCODE_PING)
+            else:
+                self.ws.send(e.payload)
 
 
 class TodoDetail(ApiView):
@@ -95,6 +83,20 @@ class TodoDetail(ApiView):
         return Response()
 
     def websocket(self, todo_id):
+        # first send out the data for this todo.
         todo = self.get_todo(todo_id)
         self.ws.send(json.dumps(todo))
-        self.bind_pg_to_websocket(filter_id=todo_id)
+
+        # Then stream out any updates.
+        self.pubsub.listen('todos_updates')
+        for e in self.pubsub.events(yield_timeouts=True):
+            if e is None:
+                self.ws.send_frame('', self.ws.OPCODE_PING)
+            else:
+                # Only publish this payload if it has our ID.
+                parsed = json.loads(e.payload)
+                if parsed.get('id') == todo_id:
+                    self.ws.send(e.payload)
+                else:
+                    # No match.  Just send a ping.
+                    self.ws.send_frame('', self.ws.OPCODE_PING)
