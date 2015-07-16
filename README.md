@@ -21,3 +21,6 @@ provisioning script to finish.
 You can now browse to the application at http://localhost:8000/.  Open it in
 multiple tabs, and you should see your changes to Todo items applied at the same
 time on all of them.
+
+You can watch the presentation that accompanies this code at
+https://youtu.be/PsorlkAF83s.
