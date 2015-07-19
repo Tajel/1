@@ -1,5 +1,5 @@
 import json
-import select
+from Queue import Empty
 
 import pgpubsub
 import psycopg2
@@ -22,6 +22,22 @@ class ApiView(View):
         self.db.execute("SELECT row_to_json(todos) FROM todos WHERE id=%s", (todo_id,))
         row = self.db.fetchone()
         return row[0] if row else None
+
+    def send_pubsub_events(self, filter_events):
+        msg_q = self.app.fanout.subscribe(filter_events)
+        try:
+            while True:
+                try:
+                    event = msg_q.get(True, timeout=5)
+                    if event is None:
+                        # The fanout will send a None in the queue if it has
+                        # been told to exit.
+                        break
+                    self.ws.send(event.payload)
+                except Empty:
+                    self.ws.send_frame('', self.ws.OPCODE_PING)
+        finally:
+            self.app.fanout.unsubscribe(msg_q)
 
 
 class TodoList(ApiView):
@@ -46,14 +62,8 @@ class TodoList(ApiView):
         # First send out all the existing ones.
         for t in self.get_todos():
             self.ws.send(json.dumps(t[0]))
+        self.send_pubsub_events(lambda x: True)
 
-        # Then stream out all the updates.
-        self.pubsub.listen('todos_updates')
-        for e in self.pubsub.events(yield_timeouts=True):
-            if e is None:
-                self.ws.send_frame('', self.ws.OPCODE_PING)
-            else:
-                self.ws.send(e.payload)
 
 
 class TodoDetail(ApiView):
@@ -87,16 +97,11 @@ class TodoDetail(ApiView):
         todo = self.get_todo(todo_id)
         self.ws.send(json.dumps(todo))
 
-        # Then stream out any updates.
-        self.pubsub.listen('todos_updates')
-        for e in self.pubsub.events(yield_timeouts=True):
-            if e is None:
-                self.ws.send_frame('', self.ws.OPCODE_PING)
-            else:
-                # Only publish this payload if it has our ID.
-                parsed = json.loads(e.payload)
-                if parsed.get('id') == todo_id:
-                    self.ws.send(e.payload)
-                else:
-                    # No match.  Just send a ping.
-                    self.ws.send_frame('', self.ws.OPCODE_PING)
+        # Subscribe to pubsub, with filter function that only returns events
+        # about this todo_id.
+        def filter_events(event):
+            if event.channel != 'todos_updates':
+                return False
+            parsed = json.loads(event.payload)
+            return parsed.get('id') == todo_id
+        self.send_pubsub_events(filter_events)

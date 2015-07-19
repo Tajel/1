@@ -2,13 +2,13 @@
 import json
 import logging
 
-import gevent
-import psycopg2
 from werkzeug.routing import Map, Rule
 from werkzeug.wrappers import BaseRequest, BaseResponse
 from werkzeug.exceptions import (HTTPException, MethodNotAllowed,
                                  NotImplemented, NotFound)
-from gwebsocket.exceptions import SocketDeadError
+
+from todos.fanout import PubSubFanout
+from todos.utils import parse_pgurl
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -64,14 +64,21 @@ class View(object):
         return resp(environ, start_response)
 
 
-
 class App(object):
     def __init__(self, urls, settings):
         self.urls = urls
         self.settings = settings
         self.map, self.handlers = build_rules(urls)
 
+    def ensure_fanout(self):
+        if not hasattr(self, 'fanout'):
+            self.fanout = PubSubFanout(['todos_updates'], **parse_pgurl(self.settings.db_url))
+
+
     def __call__(self, environ, start_response):
+        # TODO: figure out why doing this in __init__ instead of here results in
+        # corrupt/double connection messages to postgres.
+        self.ensure_fanout()
         try:
             req = Request(environ)
             try:
