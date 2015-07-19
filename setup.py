@@ -17,7 +17,7 @@ setup_params = dict(
         'gevent==1.0.1',
         'gwebsocket==0.9.6',
         'gunicorn==19.1.1',
-        'pgpubsub>=0.0.1',
+        'pgpubsub>=0.0.5',
         'psycogreen==1.0',
         'psycopg2==2.5.4',
         'PyYAML==3.11',
