@@ -30,10 +30,13 @@ def subscribe(q_in, db_params, channels):
             if cmd[0] == SUBSCRIBE:
                 q = cmd[1]
                 should_send = cmd[2]
-                subscribers[id(q)] = (q, should_send)
+                id_ = id(q)
+                subscribers[id_] = (q, should_send)
             elif cmd[0] == UNSUBSCRIBE:
                 q = cmd[1]
-                subscribers.pop(id(q), None)
+                q.put(None)
+                id_ = (q)
+                subscribers.pop(id_, None)
             elif cmd[0] == EXIT:
                 ps.close()
                 for q, _ in subscribers.values():
@@ -48,7 +51,7 @@ def subscribe(q_in, db_params, channels):
         msgs = ps.get_events(select_timeout=PG_BLOCK_TIME)
         if msgs:
             for msg in msgs:
-                for q, should_send in subscribers.values():
+                for id_, (q, should_send) in subscribers.items():
                     if should_send(msg):
                         q.put(msg)
     del subscribers
@@ -70,10 +73,25 @@ class PubSubFanout(object):
         ))
         self.worker.start()
 
-    def subscribe(self, should_send=lambda x: True):
+    def subscribe(self, filter_events, timeout=5):
         q = Queue()
-        self.q_in.put((SUBSCRIBE, q, should_send))
-        return q
+        self.q_in.put((SUBSCRIBE, q, filter_events))
+        try:
+            while True:
+                try:
+                    event = q.get(True, timeout=timeout)
+                    if event is None:
+                        # listener thread has sent a None down the queue, to let
+                        # us know to disconnect.  probably the app shutting
+                        # down.
+                        break
+                    yield event
+                except Empty:
+                    # timed out waiting for the queue.  Yield a None so the
+                    # subscriber can at least send a ping down the websocket.
+                    yield None
+        finally:
+            self.q_in.put((UNSUBSCRIBE, q))
 
     def unsubscribe(self, q):
         self.q_in.put((UNSUBSCRIBE, q))

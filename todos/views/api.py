@@ -1,5 +1,4 @@
 import json
-from Queue import Empty
 
 import pgpubsub
 import psycopg2
@@ -24,20 +23,11 @@ class ApiView(View):
         return row[0] if row else None
 
     def send_pubsub_events(self, filter_events):
-        msg_q = self.app.fanout.subscribe(filter_events)
-        try:
-            while True:
-                try:
-                    event = msg_q.get(True, timeout=5)
-                    if event is None:
-                        # The fanout will send a None in the queue if it has
-                        # been told to exit.
-                        break
-                    self.ws.send(event.payload)
-                except Empty:
-                    self.ws.send_frame('', self.ws.OPCODE_PING)
-        finally:
-            self.app.fanout.unsubscribe(msg_q)
+        for event in self.app.fanout.subscribe(filter_events):
+            if event is None:
+                self.ws.send_frame('', self.ws.OPCODE_PING)
+            else:
+                self.ws.send(event.payload)
 
 
 class TodoList(ApiView):
@@ -81,8 +71,7 @@ class TodoDetail(ApiView):
         updated = self.db.fetchone()
         if updated is None:
             return NotFound()
-        url = reverse(self.app.map, 'todo_detail', {'todo_id': todo_id})
-        return redirect(url)
+        return Response(status=204)
 
     def delete(self, todo_id):
         self.db.execute("DELETE FROM todos WHERE id=%s RETURNING id;",
