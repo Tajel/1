@@ -25,6 +25,8 @@ class ApiView(View):
     def send_pubsub_events(self, filter_events):
         for event in self.app.fanout.subscribe(filter_events):
             if event is None:
+                # We got a backend timeout.  Ensure that our frontend connection
+                # is still alive, or force it to get cleaned up if it's not.
                 self.ws.send_frame('', self.ws.OPCODE_PING)
             else:
                 self.ws.send(event.payload)

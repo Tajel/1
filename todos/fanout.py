@@ -1,5 +1,5 @@
 from threading import Thread
-from Queue import Queue, Empty
+from Queue import Queue, Empty, Full
 
 import pgpubsub
 
@@ -24,7 +24,7 @@ def subscribe(q_in, db_params, channels):
     subscribers = {}
 
     while True:
-        # check q_in for any new subscribers.
+        # check q_in for any new subscribe/unsubscribe/exit messages.
         try:
             cmd = q_in.get_nowait()
             if cmd[0] == SUBSCRIBE:
@@ -34,7 +34,10 @@ def subscribe(q_in, db_params, channels):
                 subscribers[id_] = (q, should_send)
             elif cmd[0] == UNSUBSCRIBE:
                 q = cmd[1]
-                q.put(None)
+                try:
+                    q.put(None)
+                except Full:
+                    pass
                 id_ = (q)
                 subscribers.pop(id_, None)
             elif cmd[0] == EXIT:
@@ -42,7 +45,10 @@ def subscribe(q_in, db_params, channels):
                 for q, _ in subscribers.values():
                     # Sending a None down a subscriber's queue will tell it that
                     # we're exiting.
-                    q.put(None)
+                    try:
+                        q.put(None)
+                    except Full:
+                        pass
                 break
         except Empty:
             pass
@@ -53,7 +59,10 @@ def subscribe(q_in, db_params, channels):
             for msg in msgs:
                 for id_, (q, should_send) in subscribers.items():
                     if should_send(msg):
-                        q.put(msg)
+                        try:
+                            q.put(msg)
+                        except Full:
+                            pass
     del subscribers
 
 
