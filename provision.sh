@@ -16,13 +16,6 @@ set -x
 
 export PATH
 
-cat > /etc/apt/sources.list <<EOF
-deb http://archive.ubuntu.com/ubuntu trusty main
-deb http://archive.ubuntu.com/ubuntu trusty-security main
-deb http://archive.ubuntu.com/ubuntu trusty-updates main
-deb http://archive.ubuntu.com/ubuntu trusty universe
-EOF
-
 ###################
 # PROD: APT DEPS
 ###################
