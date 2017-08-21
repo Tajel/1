@@ -32,7 +32,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     end
 
     config.vm.provision "shell" do |shell|
-        shell.path = "provision.sh"
+        shell.inline = "/bin/bash /vagrant/provision.sh true"
         shell.args = "true" # set DEV_ENV=true in provisioner script.
     end
 end
